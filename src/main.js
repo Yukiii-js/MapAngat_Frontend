@@ -1,4 +1,5 @@
 import './style.css';
+import QRCode from 'qrcode';
 
 const app = document.querySelector('#app');
 const navigation = [
@@ -14,7 +15,7 @@ const state = {
   token: localStorage.getItem('mapangat_token') || '',
   refreshToken: localStorage.getItem('mapangat_refresh_token') || '',
   user: JSON.parse(localStorage.getItem('mapangat_user') || 'null'),
-  baseUrl: import.meta.env.VITE_API_BASE_URL || '',
+  baseUrl: (import.meta.env.VITE_API_BASE_URL || '').replace(/\/+$/, ''),
   activeView: 'overview',
   data: null,
   dataRequest: null,
@@ -59,6 +60,14 @@ function statusClass(status) {
   return 'neutral';
 }
 
+async function sha256File(file) {
+  if (!globalThis.crypto?.subtle) {
+    throw new Error('Secure browser cryptography is unavailable. Open this site over HTTPS.');
+  }
+  const digest = await crypto.subtle.digest('SHA-256', await file.arrayBuffer());
+  return Array.from(new Uint8Array(digest), (byte) => byte.toString(16).padStart(2, '0')).join('');
+}
+
 async function parseJsonResponse(response) {
   const text = await response.text();
   if (!text) return {};
@@ -86,16 +95,19 @@ async function refreshAccessToken() {
   return true;
 }
 
-async function apiFetch(path, retry = true) {
+async function apiFetch(path, retry = true, request = {}) {
   const response = await fetch(`${state.baseUrl}${path}`, {
+    method: request.method || 'GET',
     headers: {
-      Authorization: `Bearer ${state.token}`,
+      ...(request.headers || {}),
       'Content-Type': 'application/json',
+      ...(state.token ? { Authorization: `Bearer ${state.token}` } : {}),
     },
+    body: request.body ? JSON.stringify(request.body) : undefined,
   });
 
   if (response.status === 401 && retry && await refreshAccessToken()) {
-    return apiFetch(path, false);
+    return apiFetch(path, false, request);
   }
 
   const result = await parseJsonResponse(response);
@@ -105,6 +117,17 @@ async function apiFetch(path, retry = true) {
   }
   if (!response.ok) throw new Error(result.error || `Request failed (${response.status})`);
   return result;
+}
+
+async function verifyPdf(reference, file) {
+  const documentHash = await sha256File(file);
+  return apiFetch('/api/ledger/verify', true, {
+    method: 'POST',
+    body: {
+      document_reference: reference,
+      document_hash: documentHash,
+    },
+  });
 }
 
 async function loadDashboardData(force = false) {
@@ -145,6 +168,7 @@ function renderLogin(errorMessage = '') {
   app.innerHTML = `
     <main class="auth-shell">
       <section class="auth-card">
+        <a class="auth-home-link" href="#" id="public-home">← Return to the public home page</a>
         <div class="brand">
           <div class="brand-badge">M</div>
           <div><h1>MapAngat</h1><p>MPDO · Baco, Oriental Mindoro</p></div>
@@ -161,6 +185,11 @@ function renderLogin(errorMessage = '') {
       </section>
     </main>
   `;
+
+  document.querySelector('#public-home').addEventListener('click', (event) => {
+    event.preventDefault();
+    renderLanding();
+  });
 
   document.querySelector('#login-form').addEventListener('submit', async (event) => {
     event.preventDefault();
@@ -197,6 +226,118 @@ function renderLogin(errorMessage = '') {
       message.classList.add('error');
       button.disabled = false;
       button.textContent = 'Sign in';
+    }
+  });
+}
+
+function renderLanding() {
+  destroyMap();
+  const verificationReference = new URLSearchParams(window.location.search).get('verify') || '';
+  app.innerHTML = `
+    <main class="public-site">
+      <header class="public-header">
+        <a class="public-brand" href="#" aria-label="MapAngat home">
+          <span class="public-seal" aria-hidden="true">B</span>
+          <span><strong>Municipality of Baco</strong><small>Oriental Mindoro · Philippines</small></span>
+        </a>
+        <nav class="public-nav" aria-label="Public navigation">
+          <a href="#about">About</a><a href="#stories">Planning stories</a><a href="#news">News &amp; updates</a>
+          <a href="https://municipalityofbaco.com/" target="_blank" rel="noopener noreferrer">Official website ↗</a>
+        </nav>
+        <button class="button public-portal-button" type="button" data-open-login>MPDO staff portal <span aria-hidden="true">→</span></button>
+      </header>
+
+      <section class="public-hero" aria-labelledby="public-title">
+        <div class="hero-orbit hero-orbit-one" aria-hidden="true"></div>
+        <div class="hero-orbit hero-orbit-two" aria-hidden="true"></div>
+        <div class="hero-landscape" aria-hidden="true"><span></span><i></i><b></b></div>
+        <div class="hero-content">
+          <p class="public-eyebrow"><span></span> MAPANGAT · MUNICIPAL PLANNING &amp; DEVELOPMENT</p>
+          <h1 id="public-title">A clearer view.<br><em>A stronger Baco.</em></h1>
+          <p class="hero-description">Explore MapAngat, a planning companion for municipal projects, location records and a more connected picture of Baco.</p>
+          <div class="hero-actions">
+            <a class="button hero-primary" href="#about">Discover MapAngat <span aria-hidden="true">↓</span></a>
+            <button class="button hero-secondary" type="button" data-open-login>Open the MPDO workspace <span aria-hidden="true">→</span></button>
+          </div>
+          <div class="hero-location"><span aria-hidden="true">⌖</span> Baco, Oriental Mindoro <i></i> Planning for people and place</div>
+        </div>
+        <div class="hero-stamp" aria-hidden="true"><span>MAPANGAT</span><strong>Baco</strong><small>PLAN · CONNECT · GROW</small></div>
+      </section>
+
+      ${verificationReference ? `
+        <section class="public-verify" aria-labelledby="public-verify-title">
+          <div><p class="public-eyebrow dark-eyebrow">PUBLIC DOCUMENT CHECK</p><h2 id="public-verify-title">Verify a permit fingerprint.</h2><p>Choose the issued PDF. It is hashed in your browser and is not uploaded.</p></div>
+          <form id="public-ledger-verify" class="form-stack">
+            <label for="public-verify-reference">Document reference</label><input id="public-verify-reference" name="document_reference" value="${escapeHtml(verificationReference)}" maxlength="120" pattern="[A-Za-z0-9][A-Za-z0-9._\\x2f\\x2d]{0,119}" required>
+            <label for="public-verify-file">PDF copy</label><input id="public-verify-file" name="document_file" type="file" accept="application/pdf,.pdf" required>
+            <button class="button button-primary" type="submit">Check fingerprint</button>
+            <p id="public-verify-message" class="form-message" aria-live="polite">A match confirms the file bytes only, not permit approval or legal status.</p>
+          </form>
+        </section>
+      ` : ''}
+
+      <section class="public-intro" id="about">
+        <div class="intro-heading"><p class="public-eyebrow dark-eyebrow">A LOCAL VIEW, BUILT FOR BACO</p><h2>Make room for better decisions.</h2></div>
+        <p>MapAngat brings municipal planning information into one useful place. Follow project progress, explore mapped records and support informed conversations about how Baco grows.</p>
+        <a class="intro-link" href="#" data-open-login>Visit the planning workspace <span aria-hidden="true">↗</span></a>
+      </section>
+
+      <section class="stories-section" id="stories">
+        <div class="section-heading">
+          <div><p class="public-eyebrow dark-eyebrow">THE MAPANGAT JOURNAL</p><h2>Planning, made more visible.</h2></div>
+          <p>Short guides to the ideas behind a connected, community-minded planning process.</p>
+        </div>
+        <div class="story-grid">
+          <article class="story-card story-blue"><span class="story-number">01 / PLACE</span><span class="story-art art-contour" aria-hidden="true"></span><div><p>LOCAL PLANNING</p><h3>Start with the places people call home.</h3><span>Good planning begins with understanding locations, local context and the people who use them.</span></div></article>
+          <article class="story-card story-gold"><span class="story-number">02 / PROGRESS</span><span class="story-art art-progress" aria-hidden="true"></span><div><p>PUBLIC PROJECTS</p><h3>Follow the work from plan to progress.</h3><span>A shared project view helps teams keep milestones, site visits and implementation status in focus.</span></div></article>
+          <article class="story-card story-ink"><span class="story-number">03 / TRUST</span><span class="story-art art-ledger" aria-hidden="true"></span><div><p>DOCUMENT INTEGRITY</p><h3>Keep a fingerprint, not a copy.</h3><span>MapAngat can record a permit PDF's SHA-256 fingerprint so a later copy can be checked for changes.</span></div></article>
+        </div>
+      </section>
+
+      <section class="public-updates" id="news">
+        <div><p class="public-eyebrow">FROM THE MUNICIPALITY</p><h2>News and announcements belong to their official source.</h2><p>For current municipal notices, programs and community updates, visit the Municipality of Baco's official website.</p></div>
+        <a class="button updates-link" href="https://municipalityofbaco.com/" target="_blank" rel="noopener noreferrer">Visit official news &amp; updates <span aria-hidden="true">↗</span></a>
+      </section>
+
+      <footer class="public-footer">
+        <a class="public-brand footer-brand" href="#"><span class="public-seal" aria-hidden="true">B</span><span><strong>MapAngat</strong><small>Municipal planning for Baco</small></span></a>
+        <span>Public information and planning tools · Baco, Oriental Mindoro</span>
+        <button class="footer-login" type="button" data-open-login>MPDO staff sign in</button>
+      </footer>
+    </main>
+  `;
+
+  document.querySelectorAll('[data-open-login]').forEach((button) => {
+    button.addEventListener('click', () => renderLogin());
+  });
+
+  const publicVerifyForm = document.querySelector('#public-ledger-verify');
+  publicVerifyForm?.scrollIntoView({ behavior: 'smooth', block: 'center' });
+  publicVerifyForm?.addEventListener('submit', async (event) => {
+    event.preventDefault();
+    const form = event.currentTarget;
+    const feedback = document.querySelector('#public-verify-message');
+    const file = form.elements['document_file'].files[0];
+    const fileError = file && (file.type === 'application/pdf' || /\.pdf$/i.test(file.name))
+      ? ''
+      : 'Select a PDF file first.';
+    if (fileError) {
+      feedback.textContent = fileError;
+      feedback.classList.add('error');
+      return;
+    }
+
+    feedback.textContent = 'Calculating and checking the document fingerprint…';
+    feedback.classList.remove('error');
+    try {
+      const result = await verifyPdf(form.elements['document_reference'].value.trim(), file);
+      feedback.innerHTML = result.verified
+        ? `Fingerprint matches the ledger. <strong>Block ${escapeHtml(result.block.index)}</strong><br>SHA-256: <code>${escapeHtml(result.block.documentHash)}</code>`
+        : 'No matching fingerprint was found for this reference and PDF. Check the reference and try the original issued document.';
+      feedback.classList.toggle('error', !result.verified);
+    } catch (error) {
+      feedback.textContent = error.message || 'Unable to verify this document.';
+      feedback.classList.add('error');
     }
   });
 }
@@ -584,13 +725,25 @@ function renderVerification(data) {
         <p id="lookup-feedback" class="form-message" aria-live="polite">No record selected.</p>
         <section id="record-details" class="record-details" hidden></section>
       </section>
-      <section class="panel report-panel"><h2>Field inspection report</h2><p class="panel-description">Inspection reporting is not yet connected to a persistence API.</p>
-        <label for="inspection-notes">Inspection findings</label><textarea id="inspection-notes" rows="5" disabled placeholder="An inspection report endpoint is not available yet."></textarea>
-        <label for="inspection-date">Inspection date</label><input id="inspection-date" type="date" disabled>
-        <button class="button button-disabled" type="button" disabled>Submit field report</button>
+      <section class="panel report-panel ledger-panel"><h2>Document fingerprint ledger</h2><p class="panel-description">Only the PDF's SHA-256 hash is recorded; the document stays on your device.</p>
+        ${['admin', 'mpdo'].includes(String(state.user?.role || '').toLowerCase()) ? `
+          <form id="ledger-anchor-form" class="form-stack">
+            <label for="ledger-anchor-reference">Permit / document reference</label><input id="ledger-anchor-reference" name="ledger-anchor-reference" maxlength="120" pattern="[A-Za-z0-9][A-Za-z0-9._\\x2f\\x2d]{0,119}" placeholder="e.g. BCO-2026-001" required>
+            <label for="ledger-document-type">Document type</label><select id="ledger-document-type" name="ledger-document-type"><option value="permit">Permit</option><option value="location_clearance">Location clearance</option><option value="other">Other</option></select>
+            <label for="ledger-anchor-file">Issued PDF</label><input id="ledger-anchor-file" name="ledger-anchor-file" type="file" accept="application/pdf,.pdf" required>
+            <button class="button button-primary" type="submit">Add fingerprint to ledger</button>
+          </form>
+          <p id="ledger-anchor-message" class="form-message" aria-live="polite"></p>
+        ` : '<p class="notice notice-amber">Only MPDO staff can add a document fingerprint.</p>'}
+        <form id="ledger-verify-form" class="form-stack ledger-verify-form">
+          <label for="ledger-verify-reference">Document reference to verify</label><input id="ledger-verify-reference" name="ledger-verify-reference" maxlength="120" pattern="[A-Za-z0-9][A-Za-z0-9._\\x2f\\x2d]{0,119}" placeholder="Enter the printed permit reference" required>
+          <label for="ledger-verify-file">PDF copy</label><input id="ledger-verify-file" name="ledger-verify-file" type="file" accept="application/pdf,.pdf" required>
+          <button class="button button-outline" type="submit">Verify document fingerprint</button>
+        </form>
+        <p id="ledger-verify-message" class="form-message" aria-live="polite">Verification compares this local PDF with the recorded ledger entry.</p>
       </section>
     </div>
-    <p class="notice notice-amber">A QR lookup only retrieves a record; it does not determine compliance or approval. Field inspections remain subject to authorized review.</p>`;
+    <p class="notice notice-amber">A matching hash confirms the PDF bytes match the recorded fingerprint. It does not establish permit validity, approval or legal status.</p>`;
 
   document.querySelector('#record-lookup').addEventListener('submit', (event) => {
     event.preventDefault();
@@ -608,6 +761,91 @@ function renderVerification(data) {
     details.hidden = false;
     document.querySelector('#lookup-feedback').textContent = 'Record found. Verify the site details before field inspection.';
   });
+
+  const showFileError = (file) => !file
+    ? 'Select a PDF file first.'
+    : (file.type !== 'application/pdf' && !/\.pdf$/i.test(file.name)
+      ? 'Select a PDF file.'
+      : '');
+  const describeBlock = (block) => `
+    <strong>Ledger block ${escapeHtml(block.index)}</strong><br>
+    SHA-256: <code>${escapeHtml(block.documentHash)}</code><br>
+    Block hash: <code>${escapeHtml(block.currentHash)}</code>`;
+
+  document.querySelector('#ledger-verify-form').addEventListener('submit', async (event) => {
+    event.preventDefault();
+    const form = event.currentTarget;
+    const feedback = document.querySelector('#ledger-verify-message');
+    const file = form.elements['ledger-verify-file'].files[0];
+    const fileError = showFileError(file);
+    if (fileError) {
+      feedback.textContent = fileError;
+      feedback.classList.add('error');
+      return;
+    }
+
+    feedback.textContent = 'Calculating and checking the document fingerprint…';
+    feedback.classList.remove('error');
+    try {
+      const reference = form.elements['ledger-verify-reference'].value.trim();
+      const result = await verifyPdf(reference, file);
+      feedback.innerHTML = result.verified
+        ? `Fingerprint matches the ledger.<br>${describeBlock(result.block)}`
+        : 'No matching fingerprint was found for this reference and PDF. Check the reference and try the original issued document.';
+      feedback.classList.toggle('error', !result.verified);
+    } catch (error) {
+      feedback.textContent = error.message || 'Unable to verify this document.';
+      feedback.classList.add('error');
+    }
+  });
+
+  const anchorForm = document.querySelector('#ledger-anchor-form');
+  anchorForm?.addEventListener('submit', async (event) => {
+    event.preventDefault();
+    const form = event.currentTarget;
+    const feedback = document.querySelector('#ledger-anchor-message');
+    const file = form.elements['ledger-anchor-file'].files[0];
+    const fileError = showFileError(file);
+    if (fileError) {
+      feedback.textContent = fileError;
+      feedback.classList.add('error');
+      return;
+    }
+
+    feedback.textContent = 'Calculating and recording the document fingerprint…';
+    feedback.classList.remove('error');
+    try {
+      const documentHash = await sha256File(file);
+      const result = await apiFetch('/api/ledger/anchor', true, {
+        method: 'POST',
+        body: {
+          document_reference: form.elements['ledger-anchor-reference'].value.trim(),
+          document_type: form.elements['ledger-document-type'].value,
+          document_hash: documentHash,
+        },
+      });
+      feedback.innerHTML = `Fingerprint recorded. Keep the issued PDF for later checks.<br>${describeBlock(result.block)}`;
+    } catch (error) {
+      feedback.textContent = error.message || 'Unable to add this document to the ledger.';
+      feedback.classList.add('error');
+      return;
+    }
+
+    try {
+      const verificationUrl = new URL(window.location.href);
+      verificationUrl.search = '';
+      verificationUrl.searchParams.set('verify', form.elements['ledger-anchor-reference'].value.trim());
+      const qrImage = await QRCode.toDataURL(verificationUrl.toString(), {
+        width: 180,
+        margin: 1,
+        color: { dark: '#092b84', light: '#ffffff' },
+      });
+      feedback.insertAdjacentHTML('beforeend', `<div class="ledger-qr"><img src="${escapeHtml(qrImage)}" alt="QR code for public document verification"><a href="${escapeHtml(verificationUrl.toString())}" target="_blank" rel="noopener noreferrer">Open public verification page ↗</a></div>`);
+    } catch (error) {
+      console.error('Document fingerprint was recorded, but QR generation failed.', error);
+      feedback.insertAdjacentHTML('beforeend', '<br>The fingerprint was recorded, but the QR code could not be generated. Try again or use the manual verification form.');
+    }
+  });
 }
 
 function logout() {
@@ -619,8 +857,8 @@ function logout() {
   localStorage.removeItem('mapangat_token');
   localStorage.removeItem('mapangat_refresh_token');
   localStorage.removeItem('mapangat_user');
-  renderLogin();
+  renderLanding();
 }
 
-if (state.token && state.user) renderDashboard();
-else renderLogin();
+if (state.token && state.user && !new URLSearchParams(window.location.search).has('verify')) renderDashboard();
+else renderLanding();
