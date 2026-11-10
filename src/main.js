@@ -125,7 +125,12 @@ async function apiFetch(path, retry = true, request = {}) {
     logout();
     throw new Error('Your session expired. Please sign in again.');
   }
-  if (!response.ok) throw new Error(result.error || `Request failed (${response.status})`);
+  if (!response.ok) {
+    const message = result.error || (response.status >= 500
+      ? 'The server encountered an internal error. Check the backend logs for this API request.'
+      : `Request failed (${response.status})`);
+    throw new Error(message);
+  }
   return result;
 }
 
