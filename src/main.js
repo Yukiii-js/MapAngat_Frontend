@@ -1,5 +1,12 @@
 import './style.css';
+import L from 'leaflet';
+import 'leaflet/dist/leaflet.css';
 import QRCode from 'qrcode';
+import { mountClearances } from './modules/location-clearance.js';
+import { mountProjects } from './modules/program-monitoring.js';
+import { mountVerification } from './modules/qr-verification.js';
+import { mountSpatialAnalysis } from './modules/spatial-analysis.js';
+import { mountAnalytics } from './modules/analytics.js';
 
 const app = document.querySelector('#app');
 const navigation = [
@@ -9,6 +16,7 @@ const navigation = [
   { id: 'clearances', label: 'Location Clearance', icon: '▤' },
   { id: 'projects', label: 'Program Monitoring', icon: '▥' },
   { id: 'verification', label: 'QR Field Verification', icon: '▧' },
+  { id: 'analytics', label: 'Spatial Analytics & Exports', icon: '▤' },
 ];
 
 const state = {
@@ -22,6 +30,7 @@ const state = {
   map: null,
   mapLayers: null,
   viewRequest: 0,
+  viewCleanup: null,
 };
 
 const pageDetails = {
@@ -31,6 +40,7 @@ const pageDetails = {
   clearances: ['Location Clearance', 'Register and track development-location clearance applications.'],
   projects: ['Program & Project Monitoring', 'Track implementation progress and upcoming field inspections.'],
   verification: ['QR Field Verification', 'Look up a permit or project record for field verification.'],
+  analytics: ['Spatial Analytics & Executive Reports', 'Filter clearance and infrastructure data for MPDC reviews and Sangguniang Bayan sessions.'],
 };
 
 function escapeHtml(value) {
@@ -148,8 +158,8 @@ async function loadDashboardData(force = false) {
         projects_on_track: countStatus(projects, ['on track']),
         projects_at_risk: countStatus(projects, ['at risk']),
         projects_delayed: countStatus(projects, ['delayed']),
-        clearance_pending: countStatus(clearances, ['pending']),
-        clearance_review: countStatus(clearances, ['for review', 'under review']),
+        clearance_pending: countStatus(clearances, ['pending', 'submitted']),
+        clearance_review: countStatus(clearances, ['for review', 'under review', 'field inspection scheduled']),
         clearance_approved: countStatus(clearances, ['approved']),
       },
       projects,
@@ -429,7 +439,9 @@ function renderError(view, error) {
 }
 
 async function renderView(view, force = false) {
-  if (view !== 'map') destroyMap();
+  state.viewCleanup?.();
+  state.viewCleanup = null;
+  destroyMap();
   const requestId = ++state.viewRequest;
   renderLoading(view);
 
@@ -438,10 +450,25 @@ async function renderView(view, force = false) {
     if (requestId !== state.viewRequest) return;
     if (view === 'overview') renderOverview(data);
     else if (view === 'map') await renderMap(data, requestId);
-    else if (view === 'clearances') renderClearances(data);
-    else if (view === 'projects') renderProjects(data);
-    else if (view === 'spatial') renderSpatialAnalysis();
-    else if (view === 'verification') renderVerification(data);
+    else if (view === 'clearances') {
+      state.viewCleanup = await mountClearances({
+        data, apiFetch, escapeHtml, formatDate, renderPageHeading, renderStatCard, renderStatus,
+        renderClearanceTable, refresh: () => renderView(view, true),
+      });
+    } else if (view === 'projects') {
+      state.viewCleanup = await mountProjects({
+        data, apiFetch, escapeHtml, formatDate, renderPageHeading, renderStatCard, renderStatus,
+        refresh: () => renderView(view, true),
+      });
+    } else if (view === 'spatial') {
+      await mountSpatialAnalysis({ data, apiFetch, escapeHtml, renderPageHeading, state, requestId });
+    } else if (view === 'verification') {
+      state.viewCleanup = await mountVerification({
+        apiFetch, escapeHtml, formatDate, renderPageHeading, renderStatus, state, sha256File, verifyPdf,
+      });
+    } else if (view === 'analytics') {
+      mountAnalytics({ data, escapeHtml, formatDate, renderPageHeading, renderStatus });
+    }
     document.querySelector('#refresh-data')?.addEventListener('click', () => renderView(view, true));
   } catch (error) {
     if (requestId === state.viewRequest && state.user) renderError(view, error);
@@ -616,12 +643,9 @@ async function renderMap(data, requestId) {
     </div>`;
 
   if (requestId !== state.viewRequest) return;
-  const [{ default: L }] = await Promise.all([
-    import('leaflet/dist/leaflet.css').then(() => import('leaflet')),
-  ]);
-  if (requestId !== state.viewRequest || !document.querySelector('#map')) return;
+  if (!document.querySelector('#map')) return;
 
-  state.map = L.map('map').setView([13.3182, 121.2825], 12);
+  state.map = L.map('map').setView([13.3182, 121.0925], 12);
   L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
     maxZoom: 19,
     attribution: '&copy; OpenStreetMap contributors',
