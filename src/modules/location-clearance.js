@@ -1,7 +1,7 @@
 import L from 'leaflet';
 import 'leaflet/dist/leaflet.css';
 import QRCode from 'qrcode';
-import { geodesicArea, normalizeGeometry } from './geometry.js';
+import { geodesicArea } from './geometry.js';
 
 const defaultCenter = [13.3182, 121.0925];
 const lifecycleStatuses = ['Submitted', 'Under Review', 'Field Inspection Scheduled', 'Approved', 'Rejected'];
@@ -157,20 +157,29 @@ export async function mountClearances({ data, apiFetch, escapeHtml, formatDate, 
   });
 
   function openApplication(record) {
+    const screeningResults = Array.isArray(record.screening_results)
+      ? record.screening_results
+      : (() => {
+        try {
+          return JSON.parse(record.screening_results || '[]');
+        } catch {
+          return [];
+        }
+      })();
     dialog.innerHTML = `
       <form method="dialog" class="dialog-close-form"><button class="dialog-close" aria-label="Close">×</button></form>
       <p class="eyebrow">CLEARANCE WORKFLOW</p><h2>${escapeHtml(record.application_id || 'Application')}</h2>
-      <p>${escapeHtml(record.applicant_name || '')} · ${escapeHtml(record.barangay || '')}</p>
+      <p>${escapeHtml(record.applicant_name || 'Applicant not recorded')} · ${escapeHtml(record.barangay || 'Barangay not recorded')}</p>
       <dl class="dialog-facts"><div><dt>Development</dt><dd>${escapeHtml(record.project_type || '—')}</dd></div>
         <div><dt>Proposed land use</dt><dd>${escapeHtml(record.land_use_category || '—')}</dd></div>
         <div><dt>Parcel area</dt><dd>${record.area_sqm ? `${Number(record.area_sqm).toLocaleString()} m²` : 'Not available'}</dd></div>
         <div><dt>Current status</dt><dd>${renderStatus(record.status)}</dd></div></dl>
-      ${record.screening_results ? `<div class="screening-summary">${renderScreening(JSON.parse(record.screening_results), 1, escapeHtml)}</div>` : ''}
-      <form id="clearance-status-form" class="form-stack compact-form">
+      ${screeningResults.length ? `<div class="screening-summary">${renderScreening(screeningResults, 1, escapeHtml)}</div>` : ''}
+      ${record.application_id ? `<form id="clearance-status-form" class="form-stack compact-form">
         <label for="workflow-status">Lifecycle status</label><select id="workflow-status">${lifecycleStatuses.map((status) => `<option ${String(record.status).toLowerCase() === status.toLowerCase() ? 'selected' : ''}>${status}</option>`).join('')}</select>
         <button class="button button-outline" type="submit">Save status</button>
-      </form>
-      ${record.parcel_geojson ? `<form id="issue-certificate-form" class="form-stack compact-form">
+      </form>` : '<p class="notice notice-amber">This older record has no stable reference; workflow actions are unavailable until its application ID is migrated.</p>'}
+      ${record.parcel_geojson && record.application_id ? `<form id="issue-certificate-form" class="form-stack compact-form">
         <label for="approved-land-use">Approved land use</label><input id="approved-land-use" value="${escapeHtml(record.approved_land_use || record.land_use_category || '')}" maxlength="100" required>
         <label for="certificate-type">Document type</label><select id="certificate-type"><option>Zoning Clearance</option><option>Locational Certificate</option></select>
         <label for="permit-valid-until">Valid until</label><input id="permit-valid-until" type="date" min="${new Date().toISOString().slice(0, 10)}" value="${escapeHtml(record.permit_valid_until || '')}" required>
@@ -180,7 +189,7 @@ export async function mountClearances({ data, apiFetch, escapeHtml, formatDate, 
       <p id="dialog-feedback" class="form-message" aria-live="polite"></p>`;
     dialog.showModal();
     dialog.querySelector('.dialog-close-form').addEventListener('submit', () => dialog.close());
-    dialog.querySelector('#clearance-status-form').addEventListener('submit', async (event) => {
+    dialog.querySelector('#clearance-status-form')?.addEventListener('submit', async (event) => {
       event.preventDefault();
       const feedback = dialog.querySelector('#dialog-feedback');
       try {
