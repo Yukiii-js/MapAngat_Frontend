@@ -7,6 +7,7 @@ import { mountProjects } from './modules/program-monitoring.js';
 import { mountVerification } from './modules/qr-verification.js';
 import { mountSpatialAnalysis } from './modules/spatial-analysis.js';
 import { mountAnalytics } from './modules/analytics.js';
+import { mountExternalApis } from './modules/external-apis.js';
 
 const app = document.querySelector('#app');
 const navigation = [
@@ -17,6 +18,7 @@ const navigation = [
   { id: 'projects', label: 'Program Monitoring', icon: '▥' },
   { id: 'verification', label: 'QR Field Verification', icon: '▧' },
   { id: 'analytics', label: 'Spatial Analytics & Exports', icon: '▤' },
+  { id: 'external-apis', label: 'External Data & APIs', icon: '◉' },
 ];
 
 const state = {
@@ -41,6 +43,7 @@ const pageDetails = {
   projects: ['Program & Project Monitoring', 'Track implementation progress and upcoming field inspections.'],
   verification: ['QR Field Verification', 'Look up a permit or project record for field verification.'],
   analytics: ['Spatial Analytics & Executive Reports', 'Filter clearance and infrastructure data for MPDC reviews and Sangguniang Bayan sessions.'],
+  'external-apis': ['External Data & API Management', 'Monitor USGS, GDACS and HDX feeds, cached layers, and resident visibility.'],
 };
 
 function escapeHtml(value) {
@@ -375,7 +378,7 @@ function renderDashboard() {
         </a>
         <p class="sidebar-label">WORKSPACE</p>
         <nav class="navigation" aria-label="Main navigation">
-          ${navigation.map(({ id, label, icon }) => `
+          ${navigation.filter(({ id }) => id !== 'external-apis' || ['admin', 'mpdo'].includes(String(state.user?.role || '').toLowerCase())).map(({ id, label, icon }) => `
             <button type="button" class="nav-button ${id === state.activeView ? 'active' : ''}" data-view="${id}">
               <span class="nav-icon" aria-hidden="true">${icon}</span><span>${label}</span>
             </button>
@@ -451,6 +454,14 @@ async function renderView(view, force = false) {
   renderLoading(view);
 
   try {
+    if (view === 'external-apis') {
+      await mountExternalApis({ apiFetch, escapeHtml, renderPageHeading });
+      if (requestId === state.viewRequest) {
+        document.querySelector('#refresh-data')?.addEventListener('click', () => renderView(view, true));
+      }
+      return;
+    }
+
     const data = await loadDashboardData(force);
     if (requestId !== state.viewRequest) return;
     if (view === 'overview') renderOverview(data);
@@ -603,7 +614,20 @@ function renderProjects(data) {
 }
 
 async function renderMap(data, requestId) {
-  const mapResult = await apiFetch('/api/map/points');
+  const [mapResponse, externalResponse] = await Promise.allSettled([
+    apiFetch('/api/map/points'),
+    apiFetch('/api/external/resident-feed'),
+  ]);
+  if (mapResponse.status === 'rejected') throw mapResponse.reason;
+  const mapResult = mapResponse.value;
+  const externalFeed = externalResponse.status === 'fulfilled'
+    ? externalResponse.value
+    : { events: [], datasets: [] };
+  const externalFeedError = externalResponse.status === 'rejected' ? externalResponse.reason.message : '';
+  const externalEvents = externalFeed.events || [];
+  const usgsEvents = externalEvents.filter((event) => event.source === 'usgs');
+  const gdacsEvents = externalEvents.filter((event) => event.source === 'gdacs');
+  const hdxDatasets = (externalFeed.datasets || []).filter((dataset) => ['Feature', 'FeatureCollection'].includes(dataset.geojson?.type));
   if (requestId !== state.viewRequest) return;
   const points = (mapResult.points || []).map((point) => ({
     ...point,
@@ -627,7 +651,7 @@ async function renderMap(data, requestId) {
     </form>
     <div class="map-layout">
       <section class="panel map-panel">
-        <div class="map-panel-heading"><div><h2>Baco, Oriental Mindoro</h2><p>${points.length} mapped records · select a marker for details</p></div><span class="map-status"><i></i> Map ready</span></div>
+        <div class="map-panel-heading"><div><h2>Baco, Oriental Mindoro</h2><p>${points.length} municipal records · ${externalEvents.length} regional advisories</p></div><span class="map-status"><i></i> Map ready</span></div>
         <div id="map" class="leaflet-map" role="application" aria-label="Map of municipal projects, permits, and hazard reports"></div>
       </section>
       <aside class="map-sidebar">
@@ -637,11 +661,21 @@ async function renderMap(data, requestId) {
           <label class="layer-option"><input class="map-layer" type="checkbox" data-layer="projects" checked><span class="legend-dot project-dot"></span><span>Municipal projects</span><strong>${counts.projects}</strong></label>
           <label class="layer-option"><input class="map-layer" type="checkbox" data-layer="permits" checked><span class="legend-dot permit-dot"></span><span>Field permits</span><strong>${counts.permits}</strong></label>
           <label class="layer-option"><input class="map-layer" type="checkbox" data-layer="reports" checked><span class="legend-dot report-dot"></span><span>Hazard reports</span><strong>${counts.reports}</strong></label>
-          <div class="legend-block"><h3>Map legend</h3><p><span class="legend-dot clearance-dot"></span> Clearance application</p><p><span class="legend-dot project-dot"></span> Municipal project</p><p><span class="legend-dot permit-dot"></span> Field compliance permit</p><p><span class="legend-dot report-dot"></span> Community hazard report</p></div>
+          <label class="layer-option"><input class="map-layer" type="checkbox" data-layer="usgs" ${usgsEvents.length ? 'checked' : ''}><span class="legend-dot usgs-dot"></span><span>USGS earthquakes</span><strong>${usgsEvents.length}</strong></label>
+          <label class="layer-option"><input class="map-layer" type="checkbox" data-layer="gdacs" ${gdacsEvents.length ? 'checked' : ''}><span class="legend-dot gdacs-dot"></span><span>GDACS regional alerts</span><strong>${gdacsEvents.length}</strong></label>
+          <label class="layer-option"><input class="map-layer" type="checkbox" data-layer="hdx" ${hdxDatasets.length ? 'checked' : ''}><span class="legend-dot hdx-dot"></span><span>HDX spatial layers</span><strong>${hdxDatasets.length}</strong></label>
+          <div class="legend-block"><h3>Map legend</h3><p><span class="legend-dot clearance-dot"></span> Clearance application</p><p><span class="legend-dot project-dot"></span> Municipal project</p><p><span class="legend-dot permit-dot"></span> Field compliance permit</p><p><span class="legend-dot report-dot"></span> Community hazard report</p>
+            ${usgsEvents.length ? '<p><span class="legend-dot usgs-dot"></span> USGS earthquake</p>' : ''}
+            ${gdacsEvents.length ? '<p><span class="legend-dot gdacs-dot"></span> GDACS alert / footprint</p>' : ''}
+            ${hdxDatasets.length ? '<p><span class="legend-dot hdx-dot"></span> HDX GeoJSON boundary</p>' : ''}
+          </div>
         </section>
         <section class="panel visible-records"><h2>Mapped records</h2><p class="panel-description">${points.length} records have coordinates</p>
           ${points.length ? points.slice(0, 6).map((point) => `
             <article class="visible-record"><span class="record-bar ${point.type}"></span><div><strong>${escapeHtml(point.reference || point.name)}</strong><small>${escapeHtml(point.barangay)} · ${escapeHtml(point.status)}${point.severity ? ` · ${escapeHtml(point.severity)} severity` : ''}</small></div></article>`).join('') : '<p class="table-empty">No records have map coordinates yet.</p>'}
+          ${externalFeedError ? `<p class="external-api-error" role="status">External hazard data is unavailable: ${escapeHtml(externalFeedError)}. Cached municipal map records are still shown.</p>` : ''}
+          ${externalEvents.length ? `<div class="external-map-events"><h3>Regional advisories</h3>${externalEvents.slice(0, 4).map((event) => `
+            <article class="visible-record"><span class="record-bar ${event.source === 'usgs' ? 'usgs' : 'gdacs'}"></span><div><strong>${escapeHtml(event.title)}</strong><small>${escapeHtml(event.source.toUpperCase())} · ${escapeHtml(event.severity_level)} · ${escapeHtml(event.distance_to_municipality_km)} km</small></div></article>`).join('')}</div>` : ''}
           <p class="map-disclaimer">Hazard markers represent community reports; confirm details with authorized personnel before acting on them.</p>
         </section>
       </aside>
@@ -667,6 +701,9 @@ async function renderMap(data, requestId) {
     projects: L.layerGroup().addTo(state.map),
     permits: L.layerGroup().addTo(state.map),
     reports: L.layerGroup().addTo(state.map),
+    usgs: L.layerGroup(),
+    gdacs: L.layerGroup(),
+    hdx: L.layerGroup(),
   };
   points.forEach((point) => {
     const layerName = `${point.type}s`;
@@ -683,6 +720,62 @@ async function renderMap(data, requestId) {
     marker.bindPopup(`<strong>${escapeHtml(point.reference || point.name)}</strong><br>${escapeHtml(point.barangay)}<br>${escapeHtml(point.status)}${point.severity ? `<br>${escapeHtml(point.severity)} severity` : ''}`);
     point.marker = marker;
   });
+
+  const severityColors = { green: '#159456', orange: '#c58a11', red: '#d34b54' };
+  usgsEvents.forEach((event) => {
+    const latitude = Number(event.latitude);
+    const longitude = Number(event.longitude);
+    if (!Number.isFinite(latitude) || !Number.isFinite(longitude)) return;
+    const magnitude = Number(event.magnitude_or_score) || 0;
+    const color = severityColors[event.severity_level] || severityColors.green;
+    const marker = L.circleMarker([latitude, longitude], {
+      radius: Math.max(6, Math.min(15, 5 + magnitude * 1.5)),
+      color,
+      fillColor: color,
+      fillOpacity: 0.72,
+      weight: 2,
+    }).addTo(state.mapLayers.usgs);
+    const tsunami = event.raw_payload?.properties?.tsunami ? 'Yes' : 'No';
+    marker.bindPopup(`<strong>${escapeHtml(event.title)}</strong><br>USGS · Magnitude ${escapeHtml(magnitude || 'N/A')}<br>Depth: ${escapeHtml(event.depth_km ?? 'N/A')} km<br>Distance from Baco: ${escapeHtml(event.distance_to_municipality_km)} km<br>Tsunami flag: ${tsunami}`);
+  });
+
+  gdacsEvents.forEach((event) => {
+    const color = severityColors[event.severity_level] || severityColors.green;
+    const title = `<strong>${escapeHtml(event.title)}</strong><br>GDACS · ${escapeHtml(event.hazard_type)} · ${escapeHtml(event.severity_level)}<br>Distance from Baco: ${escapeHtml(event.distance_to_municipality_km)} km${event.affected_population ? `<br>GDACS-reported population: ${escapeHtml(event.affected_population)}` : ''}`;
+    if (['Polygon', 'MultiPolygon'].includes(event.geometry?.type)) {
+      L.geoJSON({ type: 'Feature', geometry: event.geometry, properties: {} }, {
+        style: { color, weight: 2, fillColor: color, fillOpacity: 0.15 },
+        onEachFeature: (_feature, layer) => layer.bindPopup(title),
+      }).addTo(state.mapLayers.gdacs);
+      return;
+    }
+    const latitude = Number(event.latitude);
+    const longitude = Number(event.longitude);
+    if (!Number.isFinite(latitude) || !Number.isFinite(longitude)) return;
+    L.circleMarker([latitude, longitude], {
+      radius: 8,
+      color,
+      fillColor: color,
+      fillOpacity: 0.85,
+      weight: 2,
+    }).bindPopup(title).addTo(state.mapLayers.gdacs);
+  });
+
+  hdxDatasets.forEach((dataset) => {
+    L.geoJSON(dataset.geojson, {
+      style: { color: '#159456', weight: 1.5, fillColor: '#10b981', fillOpacity: 0.08 },
+      onEachFeature: (feature, layer) => {
+        const properties = feature.properties || {};
+        const name = properties.name || properties.NAME_3 || properties.admin3Name || properties.barangay || dataset.title;
+        const population = properties.population || properties.total_population || properties.T_TL || properties.tot_pop;
+        layer.bindPopup(`<strong>${escapeHtml(name)}</strong><br>${escapeHtml(dataset.title)}${population ? `<br>Baseline population: ${escapeHtml(population)}` : ''}`);
+      },
+    }).addTo(state.mapLayers.hdx);
+  });
+
+  if (usgsEvents.length) state.map.addLayer(state.mapLayers.usgs);
+  if (gdacsEvents.length) state.map.addLayer(state.mapLayers.gdacs);
+  if (hdxDatasets.length) state.map.addLayer(state.mapLayers.hdx);
 
   if (points.length > 1) {
     state.map.fitBounds(L.latLngBounds(points.map((point) => [point.latitude, point.longitude])).pad(0.15));
