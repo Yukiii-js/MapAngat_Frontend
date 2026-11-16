@@ -1,6 +1,7 @@
 import L from 'leaflet';
 import 'leaflet/dist/leaflet.css';
 import QRCode from 'qrcode';
+import { jsPDF } from 'jspdf';
 import { geodesicArea } from './geometry.js';
 
 const defaultCenter = [13.3182, 121.0925];
@@ -25,6 +26,124 @@ function renderScreening(matches, layersAvailable, escapeHtml) {
   return `<div class="screening-hit-list">${matches.map((match) => `
     <p><strong>${escapeHtml(match.layer)}</strong> · ${escapeHtml(match.category)}<small>${escapeHtml(match.classification || '')}</small></p>
   `).join('')}</div>`;
+}
+
+function buildCertificatePdf(certificate, qrImage, formatDate) {
+  const pdf = new jsPDF({ orientation: 'portrait', unit: 'mm', format: 'a4', compress: true });
+  const pageWidth = 210;
+  const blue = [24, 58, 128];
+  const dark = [23, 35, 60];
+  const muted = [73, 87, 117];
+  const left = 16;
+  const right = 194;
+  const width = right - left;
+  const valueX = 64;
+  const valueWidth = right - valueX;
+  const reference = String(certificate.qrReference || 'certificate');
+  pdf.setProperties({
+    title: `${certificate.certificateType} - ${reference}`,
+    subject: `Location clearance ${certificate.applicationId}`,
+    author: 'Municipal Planning and Development Office, Baco',
+  });
+  pdf.setDrawColor(...blue);
+  pdf.setLineWidth(0.8);
+  pdf.rect(8, 8, 194, 281);
+  pdf.setLineWidth(0.25);
+  pdf.rect(10, 10, 190, 277);
+
+  pdf.setTextColor(...blue);
+  pdf.setLineWidth(0.7);
+  pdf.circle(pageWidth / 2, 24, 5.5);
+  pdf.setFont('helvetica', 'bold');
+  pdf.setFontSize(14);
+  pdf.text('B', pageWidth / 2, 28.5, { align: 'center' });
+  pdf.setFontSize(10);
+  pdf.text('REPUBLIC OF THE PHILIPPINES', pageWidth / 2, 37, { align: 'center' });
+  pdf.setFont('helvetica', 'normal');
+  pdf.setFontSize(8);
+  pdf.text('PROVINCE OF ORIENTAL MINDORO', pageWidth / 2, 42, { align: 'center' });
+  pdf.text('MUNICIPALITY OF BACO', pageWidth / 2, 46, { align: 'center' });
+  pdf.text('MUNICIPAL PLANNING AND DEVELOPMENT OFFICE', pageWidth / 2, 50, { align: 'center' });
+  pdf.setDrawColor(174, 187, 210);
+  pdf.line(left, 56, right, 56);
+
+  pdf.setTextColor(...blue);
+  pdf.setFont('times', 'bold');
+  pdf.setFontSize(18);
+  pdf.text(String(certificate.certificateType || 'Location Clearance').toUpperCase(), pageWidth / 2, 68, { align: 'center' });
+
+  const applicant = certificate.applicantName || 'Applicant not recorded';
+  const certificateType = String(certificate.certificateType || 'location clearance').toLowerCase();
+  const introduction = `Following approval, this ${certificateType} is issued to ${applicant} for the proposed development below, subject to applicable laws, regulations, and the conditions of the approved land use.`;
+  pdf.setTextColor(...dark);
+  pdf.setFont('helvetica', 'normal');
+  pdf.setFontSize(9.5);
+  const introLines = pdf.splitTextToSize(introduction, width);
+  pdf.text(introLines, left, 78);
+  let y = 78 + introLines.length * 4.3 + 4;
+
+  const area = Number(certificate.area);
+  const details = [
+    ['APPLICATION ID', certificate.applicationId || 'Not available'],
+    ['APPLICANT', applicant],
+    ['PROJECT / DEVELOPMENT', certificate.projectType || 'Not available'],
+    ['LOCATION', `Barangay ${certificate.barangay || 'Not available'}, Baco, Oriental Mindoro`],
+    ['APPROVED LAND USE', certificate.landUse || 'Not available'],
+    ['PARCEL AREA', Number.isFinite(area) && area > 0 ? `${area.toLocaleString()} m2` : 'Not available'],
+    ['ISSUED', formatDate(new Date().toISOString().slice(0, 10))],
+    ['VALID UNTIL', formatDate(certificate.validUntil)],
+    ['CERTIFICATE REFERENCE', reference],
+  ];
+  details.forEach(([label, value]) => {
+    const lines = pdf.splitTextToSize(String(value), valueWidth);
+    const rowHeight = Math.max(8, lines.length * 4.1 + 3);
+    pdf.setDrawColor(220, 226, 236);
+    pdf.line(left, y + rowHeight, right, y + rowHeight);
+    pdf.setFont('helvetica', 'bold');
+    pdf.setFontSize(7.2);
+    pdf.setTextColor(...muted);
+    pdf.text(label, left + 1, y + 5.2);
+    pdf.setFontSize(9);
+    pdf.setTextColor(...dark);
+    pdf.text(lines, valueX, y + 5.2);
+    y += rowHeight;
+  });
+
+  const note = 'This certificate applies only to the location and land use recorded above. Confirm the current approval and validity using the certificate reference.';
+  pdf.setFont('helvetica', 'normal');
+  pdf.setFontSize(8.5);
+  pdf.setTextColor(...dark);
+  const noteLines = pdf.splitTextToSize(note, width);
+  y += 7;
+  pdf.text(noteLines, left, y);
+  y += noteLines.length * 4 + 5;
+
+  const verificationY = Math.max(y, 205);
+  pdf.setDrawColor(220, 226, 236);
+  pdf.rect(left, verificationY, width, 43);
+  pdf.addImage(qrImage, 'PNG', left + 5, verificationY + 3.5, 36, 36);
+  pdf.setTextColor(...blue);
+  pdf.setFont('helvetica', 'bold');
+  pdf.setFontSize(9);
+  pdf.text('FIELD VERIFICATION', left + 48, verificationY + 10);
+  pdf.setTextColor(...dark);
+  pdf.setFont('helvetica', 'normal');
+  pdf.setFontSize(8);
+  pdf.text(pdf.splitTextToSize(`Scan the QR code or provide this reference: ${reference}`, width - 58), left + 48, verificationY + 17);
+  pdf.text(pdf.splitTextToSize('For PDF integrity, upload this downloaded file to the MapAngat document fingerprint ledger.', width - 58), left + 48, verificationY + 29);
+
+  const signatureY = Math.min(verificationY + 57, 265);
+  pdf.setDrawColor(...dark);
+  pdf.line(left + 5, signatureY, left + 78, signatureY);
+  pdf.line(right - 78, signatureY, right - 5, signatureY);
+  pdf.setFont('helvetica', 'normal');
+  pdf.setFontSize(7.5);
+  pdf.setTextColor(...muted);
+  pdf.text('PREPARED BY - MPDO', left + 41.5, signatureY + 5, { align: 'center' });
+  pdf.text('AUTHORIZED SIGNATURE', right - 41.5, signatureY + 5, { align: 'center' });
+  pdf.setFontSize(7);
+  pdf.text('Issued through MapAngat - Baco, Oriental Mindoro', pageWidth / 2, 281, { align: 'center' });
+  return pdf;
 }
 
 export async function mountClearances({ data, apiFetch, escapeHtml, formatDate, renderPageHeading, renderStatCard, renderStatus, renderClearanceTable, refresh, openFingerprintLedger }) {
@@ -266,70 +385,30 @@ export async function mountClearances({ data, apiFetch, escapeHtml, formatDate, 
       const qrImage = await QRCode.toDataURL(certificate.qrReference, { width: 180, margin: 1 });
       if (!dialog.open) return;
       const validUntil = formatDate(certificate.validUntil);
-      const area = Number(certificate.area);
       dialog.querySelector('#certificate-preview').innerHTML = `
         <section class="certificate-preview"><img src="${qrImage}" alt="QR code for ${escapeHtml(certificate.qrReference)}">
           <div><p class="eyebrow">ISSUED DOCUMENT</p><strong>${escapeHtml(certificate.certificateType)}</strong>
             <p>Reference: <code>${escapeHtml(certificate.qrReference)}</code></p>
             <p>Permit status: ${escapeHtml(certificate.permitStatus || 'Valid')} · Expires ${escapeHtml(validUntil)}</p>
-            <div class="certificate-actions"><button type="button" id="print-certificate" class="button button-outline">Print / Save as PDF</button>
+            <div class="certificate-actions"><button type="button" id="print-certificate" class="button button-outline">Download certificate PDF</button>
               <button type="button" id="fingerprint-certificate" class="button button-outline">Record PDF fingerprint</button></div>
-            <p class="certificate-ledger-help">Save the printed certificate as a PDF, then select that exact file in the fingerprint ledger.</p></div></section>`;
+            <p class="certificate-ledger-help">Download the PDF, then select that exact file in the fingerprint ledger. You can print the downloaded PDF from your PDF viewer.</p></div></section>`;
       dialog.querySelector('#print-certificate').addEventListener('click', () => {
-        const printWindow = window.open('', '_blank');
-        if (!printWindow) {
-          const printFeedback = dialog.querySelector('#dialog-feedback');
-          printFeedback.textContent = 'Allow pop-ups to open the printable certificate.';
-          printFeedback.classList.add('error');
-          return;
+        const downloadButton = dialog.querySelector('#print-certificate');
+        const feedback = dialog.querySelector('#dialog-feedback');
+        downloadButton.disabled = true;
+        try {
+          const pdf = buildCertificatePdf(certificate, qrImage, formatDate);
+          const fileName = `${String(certificate.qrReference || 'certificate').replace(/[^A-Za-z0-9._-]/g, '-')}.pdf`;
+          pdf.save(fileName);
+          feedback.textContent = 'Certificate PDF download started. Upload this exact PDF to record its fingerprint.';
+          feedback.classList.remove('error');
+        } catch (error) {
+          feedback.textContent = error.message || 'Unable to generate the certificate PDF.';
+          feedback.classList.add('error');
+        } finally {
+          downloadButton.disabled = false;
         }
-        printWindow.opener = null;
-        printWindow.addEventListener('load', () => {
-          printWindow.focus();
-          printWindow.print();
-        }, { once: true });
-        printWindow.document.write(`<!doctype html><html><head><meta charset="utf-8"><title>${escapeHtml(certificate.certificateType)} - ${escapeHtml(certificate.qrReference)}</title>
-          <style>
-            @page { size: A4; margin: 18mm; }
-            * { box-sizing: border-box; }
-            body { margin: 0; color: #17233c; font: 14px Arial, sans-serif; }
-            .certificate { min-height: 250mm; border: 5px double #183a80; padding: 18mm 16mm; position: relative; }
-            .header { text-align: center; border-bottom: 1px solid #aebbd2; padding-bottom: 14px; }
-            .seal { display: inline-flex; width: 48px; height: 48px; align-items: center; justify-content: center; border: 2px solid #183a80; border-radius: 50%; color: #183a80; font-size: 23px; font-weight: bold; }
-            .header h1 { margin: 10px 0 3px; font-size: 19px; letter-spacing: 1.2px; }
-            .header p { margin: 3px 0; color: #495775; font-size: 11px; }
-            h2 { margin: 25px 0 20px; color: #183a80; font: bold 23px Georgia, serif; text-align: center; text-transform: uppercase; }
-            .intro { margin: 0 0 17px; line-height: 1.8; text-align: justify; }
-            .facts { border-collapse: collapse; width: 100%; margin: 10px 0 22px; }
-            .facts th, .facts td { border-bottom: 1px solid #dce2ec; padding: 10px 7px; text-align: left; vertical-align: top; }
-            .facts th { width: 34%; color: #455371; font-size: 11px; text-transform: uppercase; }
-            .facts td { font-weight: bold; }
-            .verify { display: flex; align-items: center; gap: 16px; margin-top: 20px; padding: 12px; border: 1px solid #dce2ec; }
-            .verify img { width: 112px; height: 112px; }
-            .verify p { margin: 5px 0; font-size: 10px; overflow-wrap: anywhere; }
-            .signatures { display: flex; justify-content: space-between; gap: 35px; margin-top: 42px; }
-            .signature { width: 45%; border-top: 1px solid #263149; padding-top: 7px; text-align: center; font-size: 10px; }
-            .footer { margin-top: 22px; color: #59657b; font-size: 9px; line-height: 1.5; text-align: center; }
-          </style></head><body><main class="certificate">
-          <header class="header"><span class="seal">B</span><h1>REPUBLIC OF THE PHILIPPINES</h1><p>PROVINCE OF ORIENTAL MINDORO</p><p>MUNICIPALITY OF BACO</p><p>MUNICIPAL PLANNING AND DEVELOPMENT OFFICE</p></header>
-          <h2>${escapeHtml(certificate.certificateType)}</h2>
-          <p class="intro">Following approval, this ${escapeHtml(certificate.certificateType.toLowerCase())} is issued to <strong>${escapeHtml(certificate.applicantName || '—')}</strong> for the proposed development below, subject to applicable laws, regulations, and the conditions of the approved land use.</p>
-          <table class="facts"><tbody>
-            <tr><th>Application ID</th><td>${escapeHtml(certificate.applicationId)}</td></tr>
-            <tr><th>Project / development</th><td>${escapeHtml(certificate.projectType || '—')}</td></tr>
-            <tr><th>Location</th><td>Barangay ${escapeHtml(certificate.barangay || '—')}, Baco, Oriental Mindoro</td></tr>
-            <tr><th>Approved land use</th><td>${escapeHtml(certificate.landUse || '—')}</td></tr>
-            <tr><th>Parcel area</th><td>${Number.isFinite(area) && area > 0 ? `${area.toLocaleString()} m²` : 'Not available'}</td></tr>
-            <tr><th>Issued</th><td>${escapeHtml(formatDate(new Date().toISOString().slice(0, 10)))}</td></tr>
-            <tr><th>Valid until</th><td>${escapeHtml(validUntil)}</td></tr>
-            <tr><th>Certificate reference</th><td>${escapeHtml(certificate.qrReference)}</td></tr>
-          </tbody></table>
-          <p class="intro">This certificate applies only to the location and land use recorded above. The QR code provides a linkable reference for field verification; confirm current permit status with the Municipality of Baco.</p>
-          <section class="verify"><img src="${qrImage}" alt="Certificate verification QR code"><div><strong>FIELD VERIFICATION</strong><p>Scan the QR code or provide this reference: <strong>${escapeHtml(certificate.qrReference)}</strong></p><p>For PDF integrity verification, record the saved PDF in the MapAngat document fingerprint ledger.</p></div></section>
-          <div class="signatures"><div class="signature">Prepared by · MPDO</div><div class="signature">Authorized signature</div></div>
-          <p class="footer">Issued through MapAngat · Baco, Oriental Mindoro · Verify approval and validity using the certificate reference.</p>
-          </main></body></html>`);
-        printWindow.document.close();
       });
       dialog.querySelector('#fingerprint-certificate').addEventListener('click', () => {
         openFingerprintLedger(certificate.qrReference);

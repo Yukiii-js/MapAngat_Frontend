@@ -172,43 +172,6 @@ button:disabled { cursor: not-allowed; opacity: .7; }
 .visible-record strong { color: #344057; font-size: 10px; }
 .visible-record small { margin-top: 4px; color: #8490a4; font-size: 9px; }
 .map-disclaimer { margin: 11px 0 0; padding-top: 10px; border-top: 1px solid #edf0f5; color: #919bad; font-size: 9px; line-height: 1.5; }
-.usgs-dot { background: #d34b54; }
-.gdacs-dot { background: #c58a11; }
-.hdx-dot { background: #159456; }
-.record-bar.usgs { background: #d34b54; }
-.record-bar.gdacs { background: #c58a11; }
-.external-map-events { margin-top: 12px; padding-top: 10px; border-top: 1px solid #edf0f5; }
-.external-map-events h3 { margin: 0 0 5px; color: #8490a4; font-size: 9px; letter-spacing: .6px; text-transform: uppercase; }
-.external-api-grid { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 14px; margin-bottom: 16px; }
-.external-api-card { padding: 17px; }
-.external-api-card-heading { display: flex; align-items: flex-start; justify-content: space-between; gap: 8px; }
-.external-api-card-heading .eyebrow { margin-bottom: 5px; font-size: 8px; }
-.external-api-card-heading h2 { margin: 0; color: #263149; font-size: 14px; }
-.external-api-card .panel-description { overflow-wrap: anywhere; min-height: 29px; }
-.external-api-metrics { display: grid; gap: 5px; margin: 13px 0; color: #8490a4; font-size: 10px; }
-.external-api-metrics strong { color: #263149; font-size: 15px; }
-.external-api-error { margin: 10px 0; padding: 9px 10px; border: 1px solid #f2c7ca; border-radius: 7px; background: #fff3f3; color: #a52e3e; font-size: 10px; line-height: 1.5; overflow-wrap: anywhere; }
-.external-enable, .external-dataset-row { display: flex; align-items: center; gap: 9px; color: #59657b; font-size: 10px; }
-.external-enable { margin: 12px 0; }
-.external-enable input, .external-dataset-row input { width: 14px; height: 14px; margin: 0; accent-color: var(--primary); }
-.external-config-form { display: grid; gap: 9px; }
-.external-config-form label { display: grid; gap: 5px; color: #59657b; font-size: 10px; font-weight: 650; }
-.external-config-form input { width: 100%; min-width: 0; padding: 8px 9px; border: 1px solid #dce2ec; border-radius: 7px; color: var(--ink); font-size: 11px; }
-.external-config-form small { color: #8490a4; font-size: 9px; }
-.external-config-form .button { width: 100%; }
-.external-dataset-panel, .external-events-panel { margin-bottom: 16px; overflow: hidden; }
-.external-dataset-list, .external-event-list { padding: 0 18px 12px; }
-.external-dataset-row { min-height: 56px; padding: 9px 0; border-top: 1px solid #f0f2f6; }
-.external-dataset-row > span:nth-child(2) { display: grid; min-width: 0; flex: 1; gap: 4px; }
-.external-dataset-row strong { overflow: hidden; color: #344057; font-size: 10px; text-overflow: ellipsis; white-space: nowrap; }
-.external-dataset-row small { overflow: hidden; color: #8490a4; font-size: 9px; text-overflow: ellipsis; white-space: nowrap; }
-.external-event-row { display: flex; align-items: center; justify-content: space-between; gap: 14px; padding: 12px 0; border-top: 1px solid #f0f2f6; }
-.external-event-details { display: grid; min-width: 0; gap: 5px; }
-.external-event-details > div { display: flex; gap: 6px; align-items: center; }
-.external-event-details > strong { color: #344057; font-size: 11px; }
-.external-event-details > small { color: #8490a4; font-size: 9px; }
-.external-source-badge { color: #59657b; font-size: 9px; font-weight: 800; letter-spacing: .4px; }
-.external-event-row .button { flex: 0 0 auto; }
 .spatial-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
 .form-panel, .screening-panel { padding-bottom: 17px; }
 .form-panel .form-stack { padding: 0 19px; }
@@ -334,7 +297,6 @@ button:disabled { cursor: not-allowed; opacity: .7; }
   .overview-grid { grid-template-columns: minmax(0, 1fr); }
   .map-layout { grid-template-columns: minmax(0, 1fr) 260px; }
   .verification-grid { grid-template-columns: minmax(0, 1fr) 300px; }
-  .external-api-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
 }
 
 @media (max-width: 800px) {
@@ -352,7 +314,6 @@ button:disabled { cursor: not-allowed; opacity: .7; }
   .map-layout { grid-template-columns: minmax(0, 1fr); }
   .map-sidebar { grid-template-columns: repeat(2, minmax(0, 1fr)); }
   .report-panel { grid-template-columns: minmax(0, 1fr); }
-  .external-api-grid { grid-template-columns: minmax(0, 1fr); }
   .analytics-filters .report-filter-grid { grid-template-columns: auto minmax(0, 1fr); }
   .analytics-report-heading { align-items: flex-start; flex-direction: column; gap: 0; }
   .project-detail-row { grid-template-columns: minmax(0, 1fr); }
@@ -385,8 +346,6 @@ button:disabled { cursor: not-allowed; opacity: .7; }
   .stat-card strong { font-size: 22px; }
   .stat-icon { width: 33px; height: 33px; flex-basis: 33px; font-size: 17px; }
   .map-sidebar { grid-template-columns: minmax(0, 1fr); }
-  .external-event-row { align-items: flex-start; flex-direction: column; }
-  .external-event-row .button { width: 100%; }
   .map-search-form { width: 100%; }
   .map-search-form input { flex: 1; }
   .leaflet-map { min-height: 330px; height: 52vh; }
