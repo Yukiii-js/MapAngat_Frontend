@@ -105,7 +105,7 @@ async function refreshAccessToken() {
   return true;
 }
 
-async function apiFetch(path, retry = true, request = {}) {
+async function apiFetch(path, retry = true, request = {}, attempt = 0) {
   const response = await fetch(`${state.baseUrl}${path}`, {
     method: request.method || 'GET',
     headers: {
@@ -117,7 +117,13 @@ async function apiFetch(path, retry = true, request = {}) {
   });
 
   if (response.status === 401 && retry && await refreshAccessToken()) {
-    return apiFetch(path, false, request);
+    return apiFetch(path, false, request, attempt);
+  }
+
+  if ((response.status === 429 || response.status === 503) && retry && attempt < 2) {
+    const delayMs = 1500 * (attempt + 1);
+    await new Promise((resolve) => setTimeout(resolve, delayMs));
+    return apiFetch(path, false, request, attempt + 1);
   }
 
   const result = await parseJsonResponse(response);
