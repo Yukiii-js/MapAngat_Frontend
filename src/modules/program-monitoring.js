@@ -3,9 +3,10 @@ import 'leaflet/dist/leaflet.css';
 
 const defaultCenter = [13.3182, 121.0925];
 
-export async function mountProjects({ data, apiFetch, escapeHtml, formatDate, renderPageHeading, renderStatCard, renderStatus, refresh }) {
+export async function mountProjects({ data, apiFetch, escapeHtml, formatDate, renderPageHeading, renderStatCard, renderStatus, state, refresh }) {
   const { projects, counts } = data;
   const barangays = [...new Set(projects.map((project) => project.barangay).filter(Boolean))].sort();
+  const canManageProjects = ['admin', 'mpdo'].includes(String(state.user?.role || '').toLowerCase());
   document.querySelector('#page-content').innerHTML = `
     ${renderPageHeading('projects')}
     <div class="stats-grid">
@@ -25,7 +26,9 @@ export async function mountProjects({ data, apiFetch, escapeHtml, formatDate, re
         <div id="project-map" class="leaflet-map" role="application" aria-label="Map of Baco infrastructure projects"></div>
       </section>
       <section class="panel project-portfolio-panel">
-        <div class="panel-heading"><div><h2>Project portfolio</h2><p>Target vs. actual completion and budget execution</p></div></div>
+        <div class="panel-heading panel-heading-wrap"><div><h2>Project portfolio</h2><p>Target vs. actual completion and budget execution</p></div>
+          ${canManageProjects ? '<button id="add-project" type="button" class="button button-primary">Add project</button>' : ''}
+        </div>
         <div id="project-list" class="project-list">
           ${projects.length ? projects.map((project) => {
             const progress = Math.max(0, Math.min(100, Number(project.progress) || 0));
@@ -47,6 +50,7 @@ export async function mountProjects({ data, apiFetch, escapeHtml, formatDate, re
         </div>
       </section>
     </div>
+    <dialog id="project-create-dialog" class="workflow-dialog"></dialog>
     <dialog id="project-update-dialog" class="workflow-dialog"></dialog>
   `;
 
@@ -86,6 +90,114 @@ export async function mountProjects({ data, apiFetch, escapeHtml, formatDate, re
   document.querySelector('#project-status-filter').addEventListener('change', applyFilters);
 
   const dialog = document.querySelector('#project-update-dialog');
+  const createDialog = document.querySelector('#project-create-dialog');
+  let createMap = null;
+  document.querySelector('#add-project')?.addEventListener('click', openCreateForm);
+  createDialog.addEventListener('close', () => {
+    createMap?.remove();
+    createMap = null;
+  });
+
+  function openCreateForm() {
+    createDialog.innerHTML = `
+      <form method="dialog" class="dialog-close-form"><button class="dialog-close" aria-label="Close">×</button></form>
+      <p class="eyebrow">PROGRAM MONITORING</p><h2>Add infrastructure project</h2>
+      <p>Enter the project details and place a pin to show it on the map. Projects without a pin still appear in the portfolio list.</p>
+      <form id="project-create-form" class="form-stack compact-form">
+        <label for="new-project-name">Project name</label><input id="new-project-name" name="project_name" maxlength="150" required>
+        <label for="new-project-barangay">Barangay</label><input id="new-project-barangay" name="barangay" maxlength="100" list="project-barangay-options" required>
+        <datalist id="project-barangay-options">${barangays.map((name) => `<option value="${escapeHtml(name)}">`).join('')}</datalist>
+        <label for="new-project-status">Implementation status</label><select id="new-project-status" name="status"><option>On track</option><option>At risk</option><option>Delayed</option></select>
+        <label for="new-project-progress">Current completion (%)</label><input id="new-project-progress" name="progress" type="number" min="0" max="100" step="1" value="0" required>
+        <label for="new-project-target">Target completion (%)</label><input id="new-project-target" name="target_progress" type="number" min="0" max="100" step="0.1" value="100" required>
+        <label for="new-project-budget">Allocated budget (PHP)</label><input id="new-project-budget" name="allocated_budget" type="number" min="0" max="999999999999.99" step="0.01" value="0" required>
+        <label for="new-project-spent">Budget executed (PHP)</label><input id="new-project-spent" name="spent_budget" type="number" min="0" max="999999999999.99" step="0.01" value="0" required>
+        <label for="new-project-inspection">Next inspection date <span class="label-muted">(optional)</span></label><input id="new-project-inspection" name="inspection_date" type="date">
+        <label>Project site <span class="label-muted">(optional)</span></label>
+        <div id="new-project-map" class="leaflet-map project-create-map" role="application" aria-label="Choose the project site on the map"></div>
+        <button id="use-new-project-location" type="button" class="button button-outline">Use current location</button>
+        <div class="geo-fields"><label for="new-project-latitude">Latitude</label><input id="new-project-latitude" name="lat" type="number" step="any" placeholder="Select on map"><label for="new-project-longitude">Longitude</label><input id="new-project-longitude" name="lng" type="number" step="any" placeholder="Select on map"></div>
+        <button class="button button-primary" type="submit">Add to project portfolio</button>
+        <p id="project-create-feedback" class="form-message" aria-live="polite"></p>
+      </form>`;
+    createDialog.showModal();
+    createDialog.querySelector('.dialog-close-form').addEventListener('submit', () => createDialog.close());
+
+    createMap = L.map('new-project-map').setView(defaultCenter, 12);
+    L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+      maxZoom: 19,
+      attribution: '&copy; OpenStreetMap contributors',
+    }).addTo(createMap);
+    let projectPin = null;
+    const setProjectPin = (latitude, longitude) => {
+      if (!createDialog.open || !createMap) return;
+      createDialog.querySelector('#new-project-latitude').value = latitude.toFixed(7);
+      createDialog.querySelector('#new-project-longitude').value = longitude.toFixed(7);
+      if (projectPin) projectPin.setLatLng([latitude, longitude]);
+      else projectPin = L.marker([latitude, longitude]).addTo(createMap);
+      createMap.setView([latitude, longitude], Math.max(createMap.getZoom(), 14));
+    };
+    createMap.on('click', ({ latlng }) => setProjectPin(latlng.lat, latlng.lng));
+    createDialog.querySelector('#use-new-project-location').addEventListener('click', () => {
+      const feedback = createDialog.querySelector('#project-create-feedback');
+      if (!navigator.geolocation) {
+        feedback.textContent = 'Geolocation is not available in this browser.';
+        feedback.classList.add('error');
+        return;
+      }
+      navigator.geolocation.getCurrentPosition(({ coords }) => {
+        setProjectPin(coords.latitude, coords.longitude);
+        feedback.textContent = 'Current location added.';
+        feedback.classList.remove('error');
+      }, (error) => {
+        feedback.textContent = error.message || 'Unable to read the current location.';
+        feedback.classList.add('error');
+      }, { enableHighAccuracy: true, timeout: 10000 });
+    });
+    requestAnimationFrame(() => createMap?.invalidateSize());
+
+    createDialog.querySelector('#project-create-form').addEventListener('submit', async (event) => {
+      event.preventDefault();
+      const form = event.currentTarget;
+      const feedback = createDialog.querySelector('#project-create-feedback');
+      const button = form.querySelector('[type="submit"]');
+      const allocated = Number(form.elements.allocated_budget.value);
+      const spent = Number(form.elements.spent_budget.value);
+      if (spent > allocated) {
+        feedback.textContent = 'Budget executed cannot exceed the allocated budget.';
+        feedback.classList.add('error');
+        return;
+      }
+      button.disabled = true;
+      feedback.textContent = 'Adding project to the portfolio…';
+      feedback.classList.remove('error');
+      try {
+        await apiFetch('/api/projects', true, {
+          method: 'POST',
+          body: {
+            project_name: form.elements.project_name.value.trim(),
+            barangay: form.elements.barangay.value.trim(),
+            status: form.elements.status.value,
+            progress: Number(form.elements.progress.value),
+            target_progress: Number(form.elements.target_progress.value),
+            allocated_budget: allocated,
+            spent_budget: spent,
+            inspection_date: form.elements.inspection_date.value || null,
+            lat: form.elements.lat.value || null,
+            lng: form.elements.lng.value || null,
+          },
+        });
+        createDialog.close();
+        await refresh();
+      } catch (error) {
+        feedback.textContent = error.message || 'Unable to add this project.';
+        feedback.classList.add('error');
+      } finally {
+        button.disabled = false;
+      }
+    });
+  }
+
   document.querySelectorAll('[data-project-update]').forEach((button) => {
     button.addEventListener('click', () => openUpdateForm(
       projects.find((project) => String(project.id) === button.dataset.projectUpdate),
@@ -176,5 +288,8 @@ export async function mountProjects({ data, apiFetch, escapeHtml, formatDate, re
   }
 
   map.invalidateSize();
-  return () => map.remove();
+  return () => {
+    createMap?.remove();
+    map.remove();
+  };
 }

@@ -7,7 +7,7 @@ function isPermitValid(record) {
   return !record.permit_valid_until || record.permit_valid_until >= new Date().toISOString().slice(0, 10);
 }
 
-export async function mountVerification({ apiFetch, escapeHtml, formatDate, renderPageHeading, renderStatus, state, sha256File, verifyPdf }) {
+export async function mountVerification({ apiFetch, escapeHtml, formatDate, renderPageHeading, renderStatus, state, sha256File, verifyPdf, initialReference = '' }) {
   document.querySelector('#page-content').innerHTML = `
     ${renderPageHeading('verification', false)}
     <div class="content-grid verification-grid">
@@ -38,6 +38,15 @@ export async function mountVerification({ apiFetch, escapeHtml, formatDate, rend
       </section>
     </div>
     <p class="notice notice-amber">A matching hash confirms the PDF bytes match the recorded fingerprint. It does not establish permit validity, approval or legal status.</p>`;
+  if (initialReference) {
+    const referenceInput = document.querySelector('#ledger-anchor-reference');
+    const documentType = document.querySelector('#ledger-document-type');
+    if (referenceInput && documentType) {
+      referenceInput.value = initialReference;
+      documentType.value = 'location_clearance';
+      document.querySelector('#ledger-anchor-file').focus();
+    }
+  }
 
   const video = document.querySelector('#qr-video');
   const startButton = document.querySelector('#start-qr-camera');

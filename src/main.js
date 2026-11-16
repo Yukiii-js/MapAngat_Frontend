@@ -446,7 +446,7 @@ function renderError(view, error) {
   document.querySelector('#retry-data').addEventListener('click', () => renderView(view, true));
 }
 
-async function renderView(view, force = false) {
+async function renderView(view, force = false, options = {}) {
   state.viewCleanup?.();
   state.viewCleanup = null;
   destroyMap();
@@ -470,17 +470,23 @@ async function renderView(view, force = false) {
       state.viewCleanup = await mountClearances({
         data, apiFetch, escapeHtml, formatDate, renderPageHeading, renderStatCard, renderStatus,
         renderClearanceTable, refresh: () => renderView(view, true),
+        openFingerprintLedger: (reference) => {
+          state.activeView = 'verification';
+          document.querySelectorAll('.nav-button').forEach((button) => button.classList.toggle('active', button.dataset.view === 'verification'));
+          renderView('verification', false, { documentReference: reference });
+        },
       });
     } else if (view === 'projects') {
       state.viewCleanup = await mountProjects({
         data, apiFetch, escapeHtml, formatDate, renderPageHeading, renderStatCard, renderStatus,
-        refresh: () => renderView(view, true),
+        state, refresh: () => renderView(view, true),
       });
     } else if (view === 'spatial') {
       await mountSpatialAnalysis({ data, apiFetch, escapeHtml, renderPageHeading, state, requestId });
     } else if (view === 'verification') {
       state.viewCleanup = await mountVerification({
         apiFetch, escapeHtml, formatDate, renderPageHeading, renderStatus, state, sha256File, verifyPdf,
+        initialReference: options.documentReference || '',
       });
     } else if (view === 'analytics') {
       mountAnalytics({ data, escapeHtml, formatDate, renderPageHeading, renderStatus });

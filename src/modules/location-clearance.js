@@ -27,7 +27,7 @@ function renderScreening(matches, layersAvailable, escapeHtml) {
   `).join('')}</div>`;
 }
 
-export async function mountClearances({ data, apiFetch, escapeHtml, formatDate, renderPageHeading, renderStatCard, renderStatus, renderClearanceTable, refresh }) {
+export async function mountClearances({ data, apiFetch, escapeHtml, formatDate, renderPageHeading, renderStatCard, renderStatus, renderClearanceTable, refresh, openFingerprintLedger }) {
   const { clearances, counts } = data;
   const content = document.querySelector('#page-content');
   content.innerHTML = `
@@ -179,12 +179,14 @@ export async function mountClearances({ data, apiFetch, escapeHtml, formatDate, 
         <label for="workflow-status">Lifecycle status</label><select id="workflow-status">${lifecycleStatuses.map((status) => `<option ${String(record.status).toLowerCase() === status.toLowerCase() ? 'selected' : ''}>${status}</option>`).join('')}</select>
         <button class="button button-outline" type="submit">Save status</button>
       </form>` : '<p class="notice notice-amber">This older record has no stable reference; workflow actions are unavailable until its application ID is migrated.</p>'}
-      ${record.parcel_geojson && record.application_id ? `<form id="issue-certificate-form" class="form-stack compact-form">
+      ${record.parcel_geojson && record.application_id && String(record.status).toLowerCase() === 'approved' ? `<form id="issue-certificate-form" class="form-stack compact-form">
         <label for="approved-land-use">Approved land use</label><input id="approved-land-use" value="${escapeHtml(record.approved_land_use || record.land_use_category || '')}" maxlength="100" required>
-        <label for="certificate-type">Document type</label><select id="certificate-type"><option>Zoning Clearance</option><option>Locational Certificate</option></select>
+        <label for="certificate-type">Document type</label><select id="certificate-type"><option ${record.certificate_type === 'Locational Certificate' ? 'selected' : ''}>Locational Certificate</option><option ${record.certificate_type === 'Zoning Clearance' ? 'selected' : ''}>Zoning Clearance</option></select>
         <label for="permit-valid-until">Valid until</label><input id="permit-valid-until" type="date" min="${new Date().toISOString().slice(0, 10)}" value="${escapeHtml(record.permit_valid_until || '')}" required>
-        <button class="button button-primary" type="submit">${record.qr_reference ? 'Re-issue certificate' : 'Approve & issue certificate'}</button>
-      </form>` : '<p class="notice notice-amber">Certificate issuance requires a parcel recorded by the location-clearance form.</p>'}
+        <button class="button button-primary" type="submit">${record.qr_reference ? 'Re-issue certificate' : 'Issue locational certificate'}</button>
+      </form>` : record.parcel_geojson && record.application_id
+        ? '<p class="notice notice-amber">Approve this application and save its status before issuing a certificate.</p>'
+        : '<p class="notice notice-amber">Certificate issuance requires a parcel recorded by the location-clearance form.</p>'}
       <div id="certificate-preview"></div>
       <p id="dialog-feedback" class="form-message" aria-live="polite"></p>`;
     dialog.showModal();
@@ -217,40 +219,120 @@ export async function mountClearances({ data, apiFetch, escapeHtml, formatDate, 
             valid_until: dialog.querySelector('#permit-valid-until').value,
           },
         });
-        const qrImage = await QRCode.toDataURL(result.qr_reference, { width: 180, margin: 1 });
-        dialog.querySelector('#certificate-preview').innerHTML = `
-          <section class="certificate-preview"><img src="${qrImage}" alt="QR code for ${escapeHtml(result.qr_reference)}">
-            <div><p class="eyebrow">DIGITAL DOCUMENT READY</p><strong>${escapeHtml(dialog.querySelector('#certificate-type').value)}</strong>
-              <p>Reference: <code>${escapeHtml(result.qr_reference)}</code></p>
-              <p>${escapeHtml(dialog.querySelector('#approved-land-use').value)}</p>
-              <button type="button" id="print-certificate" class="button button-outline">Print certificate</button></div></section>`;
-        dialog.querySelector('#print-certificate').addEventListener('click', () => {
-          const printWindow = window.open('', '_blank');
-          if (!printWindow) {
-            const printFeedback = dialog.querySelector('#dialog-feedback');
-            printFeedback.textContent = 'Allow pop-ups to open the printable digital clearance.';
-            printFeedback.classList.add('error');
-            return;
-          }
-          printWindow.opener = null;
-          printWindow.document.write(`<title>${escapeHtml(result.qr_reference)}</title><main style="font:16px Arial;max-width:760px;margin:50px auto;text-align:center"><h1>BACO · ${escapeHtml(dialog.querySelector('#certificate-type').value)}</h1><h2>${escapeHtml(record.applicant_name)}</h2><p>${escapeHtml(dialog.querySelector('#approved-land-use').value)} · ${escapeHtml(record.barangay)}</p><p>Reference ${escapeHtml(result.qr_reference)} · Valid until ${escapeHtml(dialog.querySelector('#permit-valid-until').value)}</p><img width="180" src="${qrImage}" alt="QR code"><p>Present this reference for field verification.</p></main>`);
-          printWindow.document.close();
-          printWindow.focus();
-          printWindow.print();
+        await showCertificate({
+          applicationId: record.application_id,
+          applicantName: record.applicant_name,
+          projectType: record.project_type,
+          barangay: record.barangay,
+          area: record.area_sqm,
+          landUse: dialog.querySelector('#approved-land-use').value.trim(),
+          certificateType: dialog.querySelector('#certificate-type').value,
+          validUntil: dialog.querySelector('#permit-valid-until').value,
+          qrReference: result.qr_reference,
+          permitStatus: result.permit_status,
         });
-        feedback.textContent = 'Clearance approved and QR reference issued.';
-        await refresh();
+        Object.assign(record, {
+          status: 'Approved',
+          approved_land_use: dialog.querySelector('#approved-land-use').value.trim(),
+          certificate_type: dialog.querySelector('#certificate-type').value,
+          permit_valid_until: dialog.querySelector('#permit-valid-until').value,
+          qr_reference: result.qr_reference,
+          permit_status: result.permit_status,
+        });
+        feedback.textContent = 'Locational certificate issued and QR reference ready.';
       } catch (error) {
         feedback.textContent = error.message || 'Unable to issue the digital clearance.';
         feedback.classList.add('error');
       }
     });
     if (record.qr_reference) {
-      QRCode.toDataURL(record.qr_reference, { width: 180, margin: 1 }).then((qrImage) => {
-        if (!dialog.open) return;
-        dialog.querySelector('#certificate-preview').innerHTML = `<section class="certificate-preview"><img src="${qrImage}" alt="QR code for ${escapeHtml(record.qr_reference)}"><div><p class="eyebrow">ISSUED DOCUMENT</p><strong>${escapeHtml(record.certificate_type || 'Clearance')}</strong><p>Reference: <code>${escapeHtml(record.qr_reference)}</code></p><p>Permit status: ${escapeHtml(record.permit_status || 'Valid')} · Expires ${escapeHtml(formatDate(record.permit_valid_until))}</p></div></section>`;
+      showCertificate({
+        applicationId: record.application_id,
+        applicantName: record.applicant_name,
+        projectType: record.project_type,
+        barangay: record.barangay,
+        area: record.area_sqm,
+        landUse: record.approved_land_use || record.land_use_category,
+        certificateType: record.certificate_type || 'Locational Certificate',
+        validUntil: record.permit_valid_until,
+        qrReference: record.qr_reference,
+        permitStatus: record.permit_status || 'Valid',
       }).catch((error) => {
         console.error('Unable to render the existing clearance QR code.', error);
+      });
+    }
+
+    async function showCertificate(certificate) {
+      const qrImage = await QRCode.toDataURL(certificate.qrReference, { width: 180, margin: 1 });
+      if (!dialog.open) return;
+      const validUntil = formatDate(certificate.validUntil);
+      const area = Number(certificate.area);
+      dialog.querySelector('#certificate-preview').innerHTML = `
+        <section class="certificate-preview"><img src="${qrImage}" alt="QR code for ${escapeHtml(certificate.qrReference)}">
+          <div><p class="eyebrow">ISSUED DOCUMENT</p><strong>${escapeHtml(certificate.certificateType)}</strong>
+            <p>Reference: <code>${escapeHtml(certificate.qrReference)}</code></p>
+            <p>Permit status: ${escapeHtml(certificate.permitStatus || 'Valid')} · Expires ${escapeHtml(validUntil)}</p>
+            <div class="certificate-actions"><button type="button" id="print-certificate" class="button button-outline">Print / Save as PDF</button>
+              <button type="button" id="fingerprint-certificate" class="button button-outline">Record PDF fingerprint</button></div>
+            <p class="certificate-ledger-help">Save the printed certificate as a PDF, then select that exact file in the fingerprint ledger.</p></div></section>`;
+      dialog.querySelector('#print-certificate').addEventListener('click', () => {
+        const printWindow = window.open('', '_blank');
+        if (!printWindow) {
+          const printFeedback = dialog.querySelector('#dialog-feedback');
+          printFeedback.textContent = 'Allow pop-ups to open the printable certificate.';
+          printFeedback.classList.add('error');
+          return;
+        }
+        printWindow.opener = null;
+        printWindow.addEventListener('load', () => {
+          printWindow.focus();
+          printWindow.print();
+        }, { once: true });
+        printWindow.document.write(`<!doctype html><html><head><meta charset="utf-8"><title>${escapeHtml(certificate.certificateType)} - ${escapeHtml(certificate.qrReference)}</title>
+          <style>
+            @page { size: A4; margin: 18mm; }
+            * { box-sizing: border-box; }
+            body { margin: 0; color: #17233c; font: 14px Arial, sans-serif; }
+            .certificate { min-height: 250mm; border: 5px double #183a80; padding: 18mm 16mm; position: relative; }
+            .header { text-align: center; border-bottom: 1px solid #aebbd2; padding-bottom: 14px; }
+            .seal { display: inline-flex; width: 48px; height: 48px; align-items: center; justify-content: center; border: 2px solid #183a80; border-radius: 50%; color: #183a80; font-size: 23px; font-weight: bold; }
+            .header h1 { margin: 10px 0 3px; font-size: 19px; letter-spacing: 1.2px; }
+            .header p { margin: 3px 0; color: #495775; font-size: 11px; }
+            h2 { margin: 25px 0 20px; color: #183a80; font: bold 23px Georgia, serif; text-align: center; text-transform: uppercase; }
+            .intro { margin: 0 0 17px; line-height: 1.8; text-align: justify; }
+            .facts { border-collapse: collapse; width: 100%; margin: 10px 0 22px; }
+            .facts th, .facts td { border-bottom: 1px solid #dce2ec; padding: 10px 7px; text-align: left; vertical-align: top; }
+            .facts th { width: 34%; color: #455371; font-size: 11px; text-transform: uppercase; }
+            .facts td { font-weight: bold; }
+            .verify { display: flex; align-items: center; gap: 16px; margin-top: 20px; padding: 12px; border: 1px solid #dce2ec; }
+            .verify img { width: 112px; height: 112px; }
+            .verify p { margin: 5px 0; font-size: 10px; overflow-wrap: anywhere; }
+            .signatures { display: flex; justify-content: space-between; gap: 35px; margin-top: 42px; }
+            .signature { width: 45%; border-top: 1px solid #263149; padding-top: 7px; text-align: center; font-size: 10px; }
+            .footer { margin-top: 22px; color: #59657b; font-size: 9px; line-height: 1.5; text-align: center; }
+          </style></head><body><main class="certificate">
+          <header class="header"><span class="seal">B</span><h1>REPUBLIC OF THE PHILIPPINES</h1><p>PROVINCE OF ORIENTAL MINDORO</p><p>MUNICIPALITY OF BACO</p><p>MUNICIPAL PLANNING AND DEVELOPMENT OFFICE</p></header>
+          <h2>${escapeHtml(certificate.certificateType)}</h2>
+          <p class="intro">Following approval, this ${escapeHtml(certificate.certificateType.toLowerCase())} is issued to <strong>${escapeHtml(certificate.applicantName || '—')}</strong> for the proposed development below, subject to applicable laws, regulations, and the conditions of the approved land use.</p>
+          <table class="facts"><tbody>
+            <tr><th>Application ID</th><td>${escapeHtml(certificate.applicationId)}</td></tr>
+            <tr><th>Project / development</th><td>${escapeHtml(certificate.projectType || '—')}</td></tr>
+            <tr><th>Location</th><td>Barangay ${escapeHtml(certificate.barangay || '—')}, Baco, Oriental Mindoro</td></tr>
+            <tr><th>Approved land use</th><td>${escapeHtml(certificate.landUse || '—')}</td></tr>
+            <tr><th>Parcel area</th><td>${Number.isFinite(area) && area > 0 ? `${area.toLocaleString()} m²` : 'Not available'}</td></tr>
+            <tr><th>Issued</th><td>${escapeHtml(formatDate(new Date().toISOString().slice(0, 10)))}</td></tr>
+            <tr><th>Valid until</th><td>${escapeHtml(validUntil)}</td></tr>
+            <tr><th>Certificate reference</th><td>${escapeHtml(certificate.qrReference)}</td></tr>
+          </tbody></table>
+          <p class="intro">This certificate applies only to the location and land use recorded above. The QR code provides a linkable reference for field verification; confirm current permit status with the Municipality of Baco.</p>
+          <section class="verify"><img src="${qrImage}" alt="Certificate verification QR code"><div><strong>FIELD VERIFICATION</strong><p>Scan the QR code or provide this reference: <strong>${escapeHtml(certificate.qrReference)}</strong></p><p>For PDF integrity verification, record the saved PDF in the MapAngat document fingerprint ledger.</p></div></section>
+          <div class="signatures"><div class="signature">Prepared by · MPDO</div><div class="signature">Authorized signature</div></div>
+          <p class="footer">Issued through MapAngat · Baco, Oriental Mindoro · Verify approval and validity using the certificate reference.</p>
+          </main></body></html>`);
+        printWindow.document.close();
+      });
+      dialog.querySelector('#fingerprint-certificate').addEventListener('click', () => {
+        openFingerprintLedger(certificate.qrReference);
       });
     }
   }

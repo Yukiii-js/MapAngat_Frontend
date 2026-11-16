@@ -284,9 +284,13 @@ button:disabled { cursor: not-allowed; opacity: .7; }
 .certificate-preview img { width: 112px; height: 112px; object-fit: contain; }
 .certificate-preview p { margin: 6px 0; color: #59657b; font-size: 10px; }
 .certificate-preview strong { color: #263149; font-size: 12px; }
+.certificate-actions { display: flex; flex-wrap: wrap; gap: 7px; margin-top: 10px; }
+.certificate-actions .button { min-height: 32px; padding: 7px 9px; font-size: 10px; }
+.certificate-ledger-help { max-width: 360px; line-height: 1.5; }
 .project-workspace { grid-template-columns: minmax(0, 1fr); }
 .project-map-panel { overflow: hidden; }
 .project-map-panel .leaflet-map { height: min(42vh, 400px); min-height: 280px; }
+.project-create-map { height: 220px; min-height: 180px; border: 1px solid #dce2ec; border-radius: 8px; }
 .project-detail-row { grid-template-columns: minmax(0, 1fr) 155px; }
 .completion-comparison, .budget-comparison { display: flex; justify-content: space-between; gap: 10px; margin: 8px 0 6px; color: #8490a4; font-size: 10px; }
 .completion-comparison strong, .budget-comparison strong { color: #59657b; }
